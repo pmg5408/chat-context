@@ -41,7 +41,6 @@ class ClaudeParser(BaseChatParser):
         # TODO Skipping for now since current plan is to only use offical json files
         #conversations = self._normalize_export_format(data)
         
-        # Search for conversation by name/title
         for conv_data in conversations:
             conv_name = conv_data.get('name', conv_data.get('title', ''))
             if conv_name.lower() == title.lower():
@@ -58,8 +57,7 @@ class ClaudeParser(BaseChatParser):
 
         # TODO Uncomment if i decide to support more formats
         #conversations = self._normalize_export_format(data)
-        
-        # Return lightweight metadata
+
         result = []
         for conv in conversations:
             created_at = self._parse_timestamp(conv.get('created_at'))
@@ -101,23 +99,19 @@ class ClaudeParser(BaseChatParser):
         model = conversation_data.get('model')
         
         chat_messages = conversation_data.get('chat_messages', [])
-        
-        # Parse messages
+
         messages = []
         for idx, msg_data in enumerate(chat_messages):
-            # Map Claude's sender to our role
             sender = msg_data.get('sender', 'unknown')
             if sender == 'human':
                 role = 'user'
             elif sender == 'assistant':
                 role = 'assistant'
             else:
-                # Skip system messages or unknown senders
                 continue
             
             content = msg_data.get('text', '')
-            
-            # Skip empty messages
+
             if not content:
                 continue
             
@@ -197,71 +191,3 @@ class ClaudeParser(BaseChatParser):
         except (ValueError, AttributeError):
             # Fallback to current time if parsing fails
             return datetime.now()
-
-
-# Example usage and testing
-if __name__ == '__main__':
-    parser = ClaudeParser()
-    
-    # Test with your export file
-    import sys
-    
-    if len(sys.argv) < 3:
-        print("Usage: python claude.py <path_to_claude_export.json> <conversation_title>")
-        print("\nExample:")
-        #TODO Update example to add title. 
-        #Wasn't sure if it should be wrapped in ""
-        print("  python claude.py ~/Downloads/claude_export.json")
-        sys.exit(1)
-    
-    file_path = sys.argv[1]
-    conversation_title = sys.argv[2]
-    
-    print(f"Loading Claude export from: {file_path}\n")
-    
-    # List all conversations
-    print("=" * 60)
-    print("ALL CONVERSATIONS")
-    print("=" * 60)
-    conversations = parser.list_all_conversations(file_path)
-    print(f"Found {len(conversations)} conversation(s)\n")
-    
-    for i, conv in enumerate(conversations, 1):
-        print(f"{i}. {conv['title']}")
-        print(f"   ID: {conv['id']}")
-        print(f"   Messages: {conv['message_count']}")
-        print(f"   Created: {conv['created_at']}")
-        print()
-    
-    # If there's at least one conversation, parse the first one in detail
-    if conversations:
-        print("\n" + "=" * 60)
-        print("DETAILED VIEW - FIRST CONVERSATION")
-        print("=" * 60)
-        
-        conv = parser.find_conversation_by_title(file_path, conversation_title)
-        
-        if conv:
-            print(f"Title: {conv.title}")
-            print(f"Platform: {conv.platform}")
-            print(f"Model: {conv.model or 'default'}")
-            print(f"Created: {conv.created_at}")
-            print(f"Total Messages: {len(conv.messages)}\n")
-            
-            print("-" * 60)
-            print("MESSAGES (showing first 5)")
-            print("-" * 60)
-            
-            for msg in conv.messages[:5]:
-                print(f"\n[{msg.role.upper()}] (Index: {msg.message_index})")
-                print(f"Time: {msg.timestamp}")
-                
-                # Show first 200 characters of content
-                content_preview = msg.content[:200]
-                if len(msg.content) > 200:
-                    content_preview += "..."
-                print(f"Content: {content_preview}")
-                print("-" * 60)
-            
-            if len(conv.messages) > 5:
-                print(f"\n... and {len(conv.messages) - 5} more messages")

@@ -1,6 +1,20 @@
-annotated-types==0.7.0
-pydantic==2.12.5
-pydantic_core==2.41.5
-python-dotenv==1.2.1
-typing-inspection==0.4.2
-typing_extensions==4.15.0
+# Core dependencies
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# CLI framework
+click>=8.1.0
+
+# Embedding models
+sentence-transformers>=2.5.0
+torch>=2.0.0
+openai>=1.12.0
+
+# Vector database (for ChromaStore)
+chromadb>=0.4.22
+
+# Pydantic for data validation
+pydantic>=2.5.0
+
+# Type hints support
+typing-extensions>=4.8.0

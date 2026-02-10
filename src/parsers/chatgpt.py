@@ -30,7 +30,6 @@ class ChatGPTParser(BaseChatParser):
         with open(file_path, 'r', encoding='utf-8') as f:
             conversations = json.load(f)
         
-        # Search for conversation by title
         for conv_data in conversations:
             if conv_data.get('title', '').lower() == title.lower():
                 return self.parse_conversation(conv_data)
@@ -43,8 +42,7 @@ class ChatGPTParser(BaseChatParser):
         
         with open(file_path, 'r', encoding='utf-8') as f:
             conversations = json.load(f)
-        
-        # Return lightweight metadata only
+
         return [
             {
                 'id': conv.get('id'),
@@ -66,8 +64,7 @@ class ChatGPTParser(BaseChatParser):
         conv_id = conversation_data.get('id', 'unknown')
         title = conversation_data.get('title', 'Untitled')
         mapping = conversation_data.get('mapping', {})
-        
-        # Extract and parse messages
+
         messages = []
         message_index = 0
         
@@ -76,20 +73,17 @@ class ChatGPTParser(BaseChatParser):
                 continue
             
             msg_data = node['message']
-            
-            # Skip messages without content
+
             if not msg_data.get('content') or not msg_data['content'].get('parts'):
                 continue
             
             role = msg_data.get('author', {}).get('role', 'unknown')
-            
-            # Map ChatGPT roles to our standard roles
+
             if role == 'user':
                 role = 'user'
             elif role == 'assistant':
                 role = 'assistant'
             else:
-                # Skip system messages or other roles
                 continue
             
             # Combine all parts into one message
@@ -105,7 +99,6 @@ class ChatGPTParser(BaseChatParser):
             ))
             message_index += 1
         
-        # Sort messages by timestamp to get chronological order
         messages.sort(key=lambda m: m.timestamp)
         
         # Re-index after sorting
@@ -121,74 +114,3 @@ class ChatGPTParser(BaseChatParser):
             created_at=datetime.fromtimestamp(conversation_data.get('create_time', 0)),
             updated_at=datetime.fromtimestamp(conversation_data.get('update_time', 0))
         )
-
-
-# Example usage and testing
-if __name__ == '__main__':
-    parser = ChatGPTParser()
-    
-    # Test with your export file
-    import sys
-    
-    if len(sys.argv) < 3:
-        print("Usage: python chatgpt.py <path_to_conversations.json> <conversation_title>")
-        print("\nExample:")
-        print('  python chatgpt.py ~/Downloads/conversations.json "My Conversation Title"')
-        sys.exit(1)
-    
-    file_path = sys.argv[1]
-    conversation_title = sys.argv[2]
-    
-    print(f"Loading ChatGPT export from: {file_path}\n")
-    
-    # List all conversations
-    print("=" * 60)
-    print("ALL CONVERSATIONS")
-    print("=" * 60)
-    conversations = parser.list_all_conversations(file_path)
-    print(f"Found {len(conversations)} conversation(s)\n")
-    
-    for i, conv in enumerate(conversations[:5], 1):
-        print(f"{i}. {conv['title']}")
-        print(f"   ID: {conv['id']}")
-        print(f"   Messages: {conv['message_count']}")
-        print(f"   Created: {conv['created_at']}")
-        print()
-    
-    if len(conversations) > 5:
-        print(f"... and {len(conversations) - 5} more conversations")
-        print()
-    
-    # Find and display the specific conversation
-    if conversations:
-        print("\n" + "=" * 60)
-        print("DETAILED VIEW - REQUESTED CONVERSATION")
-        print("=" * 60)
-        
-        conv = parser.find_conversation_by_title(file_path, conversation_title)
-        
-        if conv:
-            print(f"Title: {conv.title}")
-            print(f"Platform: {conv.platform}")
-            print(f"Created: {conv.created_at}")
-            print(f"Total Messages: {len(conv.messages)}\n")
-            
-            print("-" * 60)
-            print("MESSAGES (showing first 5)")
-            print("-" * 60)
-            
-            for msg in conv.messages[:5]:
-                print(f"\n[{msg.role.upper()}] (Index: {msg.message_index})")
-                print(f"Time: {msg.timestamp}")
-                
-                # Show first 200 characters of content
-                content_preview = msg.content[:200]
-                if len(msg.content) > 200:
-                    content_preview += "..."
-                print(f"Content: {content_preview}")
-                print("-" * 60)
-            
-            if len(conv.messages) > 5:
-                print(f"\n... and {len(conv.messages) - 5} more messages")
-        else:
-            print(f"\nConversation with title '{conversation_title}' not found.")
