@@ -193,22 +193,18 @@ def search(query, conversation_title, limit, config):
     try:
         cfg = load_config(config)
         
-        # Get collection name
         orchestrator = IngestionOrchestrator(cfg)
         collection_name = orchestrator._sanitize_collection_name(conversation_title)
         
-        # Initialize embedder
         if cfg.embedding.provider == 'openai':
             from .embedders.openai_embedder import OpenAIEmbedder
             embedder = OpenAIEmbedder(cfg.embedding.openai)
-        
-        # Search
+
         from .storage.chroma_store import ChromaStore
         storage = ChromaStore(cfg.storage.chroma_db_path, collection_name, embedder)
         
         results = storage.search(query, n_results=limit)
-        
-        # Display
+
         click.echo(f"\nSearching '{conversation_title}' for: '{query}'\n")
         click.echo("=" * 80)
         
