@@ -1,0 +1,35 @@
+exports:
+  claude: ./data/exports/claude/conversations.json
+  chatgpt: ./data/exports/chatgpt/conversations.json
+  #cursor: ./data/exports/cursor/conversations.json
+
+# Embedding settings
+embedding:
+  provider: openai  # Options: 'local' or 'openai'
+  
+  # Local model settings
+  local:
+    model_name: all-MiniLM-L6-v2
+    device: cpu  # or 'cuda' if you have GPU
+  
+  # OpenAI settings (only used if provider: openai)
+  openai:
+    model: text-embedding-3-small
+    api_key_env: OPENAI_API_KEY  # Read from environment variable
+    batch_size: 100  # How many to embed at once
+
+# Storage settings
+storage:
+  chroma_db_path: ./data/chroma_db
+  collections_metadata: ./data/collections.yaml
+
+# Chunking settings (for long messages)
+chunking:
+  max_tokens: 1000  # Split messages longer than this
+  overlap: 100      # Token overlap between chunks
+  enabled: false    # Start with false, enable later if needed
+
+# Ingestion settings
+ingestion:
+  batch_size: 100  # How many messages to process at once
+  skip_empty: true # Skip messages with no content
