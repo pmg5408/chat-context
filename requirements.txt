@@ -18,3 +18,5 @@ pydantic>=2.5.0
 
 # Type hints support
 typing-extensions>=4.8.0
+
+mcp
