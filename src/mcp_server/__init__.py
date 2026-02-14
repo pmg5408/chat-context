@@ -2,6 +2,6 @@
 MCP Server for searching chat history.
 """
 
-from .server import create_server
+from .server import main
 
-__all__ = ['create_server']
+__all__ = ['main']
