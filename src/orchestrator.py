@@ -13,6 +13,7 @@ from .parsers.chatgpt import ChatGPTParser
 from .embedders.openai_embedder import OpenAIEmbedder
 from .storage.chroma_store import ChromaStore
 from .config import Config
+from .topic_extractor import OpenRouterTopicExtractor
 
 
 class IngestionOrchestrator:
@@ -27,6 +28,15 @@ class IngestionOrchestrator:
             self.embedder = OpenAIEmbedder(config.embedding.openai)
         #else:
             #self.embedder = LocalEmbedder(config.embedding.local)
+
+        # Initialize topic extractor if enabled
+        self.topic_extractor = None
+        if config.topic_extraction and config.topic_extraction.enabled:
+            if config.topic_extraction.provider == 'openrouter':
+                self.topic_extractor = OpenRouterTopicExtractor(
+                    config.topic_extraction.openrouter
+                )
+                print(f"  Topic extractor enabled: {config.topic_extraction.openrouter.model}")
 
         self.chroma_path = config.storage.chroma_db_path
         self.metadata_path = Path(config.storage.collections_metadata)
@@ -117,10 +127,33 @@ class IngestionOrchestrator:
         if existing:
             raise ValueError(f"Collection '{collection_name}' already exists. Use 'update' to add new messages.")
 
+        # Extract topics if topic extractor is enabled
+        # Using dictionary for O(1) lookups later
+        topics_by_index: Dict[int, List[str]] = {}
+        if self.topic_extractor:
+            print(f"  Extracting topics using SLM...")
+            
+            # Get texts in order (only non-empty)
+            texts = []
+            msg_indices = []
+            for msg in conversation.messages:
+                if msg.content.strip():
+                    texts.append(msg.content)
+                    msg_indices.append(msg.message_index)
+            
+            # Extract topics - pass both texts and message_indices
+            topics_by_index = self.topic_extractor.extract_topics(texts, msg_indices)
+            
+            print(f"  Extracted topics for {len(topics_by_index)} messages")
+
+        # Build documents with topics
         documents = []
         for msg in conversation.messages:
             if not msg.content.strip():
                 continue
+            
+            # Get topics for this message
+            topics = topics_by_index.get(msg.message_index, [])
             
             documents.append({
                 'text': msg.content,
@@ -131,12 +164,23 @@ class IngestionOrchestrator:
                     'role': msg.role,
                     'timestamp': msg.timestamp.isoformat(),
                     'message_index': msg.message_index,
-                    'total_messages': len(conversation.messages)
+                    'total_messages': len(conversation.messages),
+                    'topics': ','.join(topics) if topics else '',
+                    'is_deprecated': 'false'
                 }
             })
 
         storage = ChromaStore(self.chroma_path, collection_name, self.embedder)
         storage.add_documents(documents)
+
+        # Update collection topics in metadata and print
+        if topics_by_index:
+            all_topics = set()
+            for topics in topics_by_index.values():
+                all_topics.update(topics)
+            sorted_topics = sorted(all_topics)
+            storage.update_collection_topics(sorted_topics)
+            print(f"  Topics: {sorted_topics}")
 
         last_timestamp = max(
             (self._parse_timestamp(doc['metadata']['timestamp']) for doc in documents),
@@ -199,35 +243,74 @@ class IngestionOrchestrator:
         # Filter messages after last timestamp
         last_timestamp = self._parse_timestamp(conv_meta['last_message_timestamp'])
         
-        new_documents = []
+        new_messages = []
         for msg in conversation.messages:
             msg_timestamp = self._parse_timestamp(msg.timestamp.isoformat())
             
             # Only add messages AFTER last timestamp
             if msg_timestamp > last_timestamp and msg.content.strip():
-                new_documents.append({
-                    'text': msg.content,
-                    'metadata': {
-                        'conversation_id': conversation.conversation_id,
-                        'conversation_title': conversation.title,
-                        'platform': conversation.platform,
-                        'role': msg.role,
-                        'timestamp': msg.timestamp.isoformat(),
-                        'message_index': msg.message_index,
-                        'total_messages': len(conversation.messages)
-                    }
-                })
+                new_messages.append(msg)
         
-        if not new_documents:
+        if not new_messages:
             return {
                 'new_messages': 0,
                 'total_messages': conv_meta['message_count'],
                 'conversation_title': conversation.title
             }
         
+        # Extract topics for new messages if topic extractor is enabled
+        topics_by_index: Dict[int, List[str]] = {}
+        if self.topic_extractor and new_messages:
+            print(f"  Extracting topics for {len(new_messages)} new messages...")
+            
+            # Get all existing topics from ChromaDB to pass to SLM
+            storage = ChromaStore(self.chroma_path, collection_name, self.embedder)
+            existing_topics = storage.get_all_topics()
+            print(f"  Existing topics in conversation: {existing_topics}")
+            
+            # Extract topics for new messages (passing texts, indices, and existing topics)
+            texts = [msg.content for msg in new_messages]
+            msg_indices = [msg.message_index for msg in new_messages]
+            topics_by_index = self.topic_extractor.extract_topics_with_context(
+                texts, 
+                msg_indices,
+                existing_topics
+            )
+            
+            print(f"  Extracted topics for {len(topics_by_index)} new messages")
+
+        # Build documents with topics
+        new_documents = []
+        for msg in new_messages:
+            topics = topics_by_index.get(msg.message_index, [])
+            
+            new_documents.append({
+                'text': msg.content,
+                'metadata': {
+                    'conversation_id': conversation.conversation_id,
+                    'conversation_title': conversation.title,
+                    'platform': conversation.platform,
+                    'role': msg.role,
+                    'timestamp': msg.timestamp.isoformat(),
+                    'message_index': msg.message_index,
+                    'total_messages': len(conversation.messages),
+                    'topics': ','.join(topics) if topics else '',
+                    'is_deprecated': 'false'
+                }
+            })
+        
         # Add to existing collection
         storage = ChromaStore(self.chroma_path, collection_name, self.embedder)
         storage.add_documents(new_documents)
+        
+        # Update collection topics in metadata and print
+        if topics_by_index:
+            all_topics = set(existing_topics)  # Start with existing topics
+            for topics in topics_by_index.values():
+                all_topics.update(topics)
+            sorted_topics = sorted(all_topics)
+            storage.update_collection_topics(sorted_topics)
+            print(f"  Topics: {sorted_topics}")
         
         # Update metadata
         new_last_timestamp = max(

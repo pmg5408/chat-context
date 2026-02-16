@@ -33,3 +33,21 @@ chunking:
 ingestion:
   batch_size: 100  # How many messages to process at once
   skip_empty: true # Skip messages with no content
+
+# Topic extraction settings
+topic_extraction:
+  enabled: true  # Set to false to skip topic extraction
+  provider: openrouter
+  
+  # OpenRouter settings (only used if provider: openrouter)
+  openrouter:
+    model: google/gemma-3-27b-it # Cheap SLM model
+    api_key_env: OPENROUTER_API_KEY  # Read from environment variable
+    batch_size: 10  # How many messages to process at once
+    # Prompt template for extracting topics from messages
+    prompt_template: |
+      Extract the main topics and subtopics from this conversation message.
+      Return a JSON array of topic strings, or an empty array if no clear topics.
+      Only return the JSON array, nothing else.
+      
+      Message: {content}
