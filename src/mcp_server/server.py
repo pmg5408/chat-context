@@ -55,6 +55,48 @@ async def list_tools() -> list[Tool]:
                 "properties": {},
                 "required": []
             }
+        ),
+        Tool(
+            name="search_by_topic",
+            description="Search through conversations filtered by a specific topic. Use this when you want to find messages related to a particular topic.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to search for in the conversations"
+                    },
+                    "conversation_titles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of conversation titles to search (leave empty to search all)"
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": "Topic to filter by (e.g., 'react', 'database', 'auth')"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 5)",
+                        "default": 5
+                    }
+                },
+                "required": ["query", "topic"]
+            }
+        ),
+        Tool(
+            name="get_conversation_topics",
+            description="Get all topics associated with a conversation. Use this to see what topics a conversation covers. You can use these to filter when searching for context",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "conversation_title": {
+                        "type": "string",
+                        "description": "Title of the conversation to get topics for"
+                    }
+                },
+                "required": ["conversation_title"]
+            }
         )
     ]
 
@@ -99,9 +141,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 if config.embedding.provider == 'openai':
                     from ..embedders.openai_embedder import OpenAIEmbedder
                     embedder = OpenAIEmbedder(config.embedding.openai)
-                #else:
-                    #from ..embedders.local_embedder import LocalEmbedder
-                    #embedder = LocalEmbedder(config.embedding.local)
                 
                 storage = ChromaStore(
                     config.storage.chroma_db_path,
@@ -148,6 +187,91 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 text=f"Error searching conversations: {str(e)}"
             )]
     
+    elif name == "search_by_topic":
+        query = arguments["query"]
+        topic = arguments["topic"]
+        conversation_titles = arguments.get("conversation_titles", [])
+        limit = arguments.get("limit", 5)
+        
+        try:
+            conversations = orchestrator.list_conversations()
+            
+            if not conversations:
+                return [TextContent(
+                    type="text",
+                    text="No conversations available"
+                )]
+
+            if conversation_titles:
+                conversations = [
+                    c for c in conversations
+                    if c['original_title'] in conversation_titles
+                ]
+                
+                if not conversations:
+                    return [TextContent(
+                        type="text",
+                        text=f"None of the specified conversations were found: {conversation_titles}"
+                    )]
+
+            all_results = []
+            
+            for conv in conversations:
+                collection_name = conv['collection_name']
+
+                from ..storage.chroma_store import ChromaStore
+
+                if config.embedding.provider == 'openai':
+                    from ..embedders.openai_embedder import OpenAIEmbedder
+                    embedder = OpenAIEmbedder(config.embedding.openai)
+                
+                storage = ChromaStore(
+                    config.storage.chroma_db_path,
+                    collection_name,
+                    embedder
+                )
+
+                results = storage.search_by_topic(query, topic, n_results=limit)
+
+                for i in range(len(results['documents'][0])):
+                    all_results.append({
+                        'conversation': conv['original_title'],
+                        'platform': conv['platform'],
+                        'text': results['documents'][0][i],
+                        'metadata': results['metadatas'][0][i],
+                        'distance': results['distances'][0][i]
+                    })
+
+            all_results.sort(key=lambda x: x['distance'])
+
+            all_results = all_results[:limit]
+            
+            if not all_results:
+                return [TextContent(
+                    type="text",
+                    text=f"No results found for query: '{query}' with topic: '{topic}'"
+                )]
+
+            response = f"Found {len(all_results)} relevant messages for '{query}' with topic '{topic}':\n\n"
+            
+            for i, result in enumerate(all_results, 1):
+                similarity = 1 - result['distance']
+                topics = result['metadata'].get('topics', '')
+                response += f"**Result {i}** (similarity: {similarity:.2f})\n"
+                response += f"From: {result['conversation']} ({result['platform']})\n"
+                response += f"Role: {result['metadata']['role']}\n"
+                response += f"Topics: {topics}\n"
+                response += f"Content: {result['text']}\n\n"
+                response += "-" * 80 + "\n\n"
+            
+            return [TextContent(type="text", text=response)]
+            
+        except Exception as e:
+            return [TextContent(
+                type="text",
+                text=f"Error searching by topic: {str(e)}"
+            )]
+    
     elif name == "list_available_conversations":
         try:
             conversations = orchestrator.list_conversations()
@@ -173,6 +297,64 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(
                 type="text",
                 text=f"Error listing conversations: {str(e)}"
+            )]
+    
+    elif name == "get_conversation_topics":
+        conversation_title = arguments["conversation_title"]
+        
+        try:
+            conversations = orchestrator.list_conversations()
+            
+            if not conversations:
+                return [TextContent(
+                    type="text",
+                    text="No conversations available"
+                )]
+
+            # Find the conversation
+            conv = None
+            for c in conversations:
+                if c['original_title'] == conversation_title:
+                    conv = c
+                    break
+            
+            if not conv:
+                return [TextContent(
+                    type="text",
+                    text=f"Conversation '{conversation_title}' not found"
+                )]
+
+            # Get topics from ChromaDB
+            from ..storage.chroma_store import ChromaStore
+            
+            if config.embedding.provider == 'openai':
+                from ..embedders.openai_embedder import OpenAIEmbedder
+                embedder = OpenAIEmbedder(config.embedding.openai)
+            
+            storage = ChromaStore(
+                config.storage.chroma_db_path,
+                conv['collection_name'],
+                embedder
+            )
+
+            topics = storage.get_all_topics()
+            
+            if not topics:
+                return [TextContent(
+                    type="text",
+                    text=f"No topics found for '{conversation_title}'. Topics are extracted when the conversation is added."
+                )]
+
+            response = f"Topics for '{conversation_title}' ({len(topics)} topics):\n\n"
+            for topic in topics:
+                response += f"- {topic}\n"
+            
+            return [TextContent(type="text", text=response)]
+            
+        except Exception as e:
+            return [TextContent(
+                type="text",
+                text=f"Error getting topics: {str(e)}"
             )]
     
     else:
