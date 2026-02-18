@@ -6,6 +6,11 @@ from chromadb.config import Settings
 from pathlib import Path
 from typing import List, Dict, Optional
 
+# Document type constants for reliable filtering
+DOC_TYPE_MAIN = "main"
+DOC_TYPE_TOPIC = "topic"
+
+
 class ChromaStore:
     """
     Wrapper around ChromaDB for storing and searching conversation messages.
@@ -88,10 +93,10 @@ class ChromaStore:
             if topics_str:
                 topics = [t.strip() for t in topics_str.split(',') if t.strip()]
             
-            # Create main document (no topic) - for regular search
+            # Create main document - for regular search
             expanded_docs.append({
                 'text': text,
-                'metadata': {**metadata},  # No topic field
+                'metadata': {**metadata, 'doc_type': DOC_TYPE_MAIN},
                 'message_id': f"{metadata['platform']}_{metadata['conversation_id']}_{metadata['message_index']}"
             })
             
@@ -99,7 +104,7 @@ class ChromaStore:
             for topic in topics:
                 expanded_docs.append({
                     'text': text,
-                    'metadata': {**metadata, 'topic': topic},
+                    'metadata': {**metadata, 'topic': topic, 'doc_type': DOC_TYPE_TOPIC},
                     'message_id': f"{metadata['platform']}_{metadata['conversation_id']}_{metadata['message_index']}"
                 })
         
@@ -140,41 +145,34 @@ class ChromaStore:
         self, 
         query: str, 
         n_results: int = 5, 
-        filters: Optional[Dict] = None,
-        include_topics: bool = False
+        filters: Optional[Dict] = None
     ) -> Dict:
         """
         Search for similar documents in the collection.
         
-        By default, returns only "main" documents (those without a topic field).
-        Set include_topics=True to also include topic-specific documents.
+        Always returns only "main" documents (doc_type="main"), which represent
+        one entry per message. Use search_by_topic() to search topic documents.
         
         Args:
             query: Search query text
             n_results: Number of results to return
-            filters: Optional metadata filters
-                Example: {"role": "assistant"}
-            include_topics: If True, include topic-specific documents (default: False)
+            filters: Optional additional metadata filters e.g. {"role": "assistant"}
         
         Returns:
             Dict with keys: 'documents', 'metadatas', 'distances', 'ids'
         """
         query_embedding = self.embedder.embed_single(query)
 
-        # Build where filter - use ChromaDB's $not_exists to filter at query time
-        if include_topics:
-            # Include all documents (both main and topic-specific)
-            where_filter = filters.copy() if filters else None
+        # Always restrict to main documents (one per message, no duplicates).
+        # Use explicit $eq operator for reliable cross-version ChromaDB behaviour.
+        doc_type_filter = {"doc_type": {"$eq": DOC_TYPE_MAIN}}
+
+        if filters:
+            # Combine with caller-supplied filters using $and
+            where_filter = {"$and": [{k: {"$eq": v}} for k, v in filters.items()] + [doc_type_filter]}
         else:
-            # Only include main documents (those without 'topic' field)
-            # Use $not_exists to filter at database level
-            base_filter = {"topic": {"$not_exists": True}}
-            if filters:
-                # Combine with user filters
-                where_filter = {**base_filter, **filters}
-            else:
-                where_filter = base_filter
-        
+            where_filter = doc_type_filter
+
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,
@@ -192,7 +190,8 @@ class ChromaStore:
         """
         Search for similar documents filtered by topic.
         
-        Returns only topic-specific documents (those with matching topic field).
+        Returns only topic-specific documents (doc_type="topic") whose topic
+        field exactly matches the given topic.
         
         Args:
             query: Search query text
@@ -202,9 +201,23 @@ class ChromaStore:
         Returns:
             Dict with keys: 'documents', 'metadatas', 'distances', 'ids'
         """
-        # Filter by topic field - only returns topic-specific entries
-        # We use include_topics=True since we explicitly want topic documents
-        return self.search(query, n_results=n_results, filters={"topic": topic}, include_topics=True)
+        query_embedding = self.embedder.embed_single(query)
+
+        # Explicitly target topic documents for the requested topic only.
+        where_filter = {
+            "$and": [
+                {"doc_type": {"$eq": DOC_TYPE_TOPIC}},
+                {"topic": {"$eq": topic}}
+            ]
+        }
+
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results,
+            where=where_filter
+        )
+
+        return results
     
     def get_document_count(self) -> int:
         """Get total number of documents in collection."""
