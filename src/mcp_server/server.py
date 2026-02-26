@@ -97,6 +97,28 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["conversation_title"]
             }
+        ),
+        Tool(
+            name="deprecate_message",
+            description="Mark a message as deprecated/superseded. Deprecated messages won't appear in future searches but remain in the database. Use this when the user indicates that information in a previous message is outdated or incorrect.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "conversation_title": {
+                        "type": "string",
+                        "description": "Title of the conversation"
+                    },
+                    "message_index": {
+                        "type": "integer",
+                        "description": "Index of the message to deprecate (0-based)"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why this message is being deprecated (optional)"
+                    }
+                },
+                "required": ["conversation_title", "message_index"]
+            }
         )
     ]
 
@@ -355,6 +377,66 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(
                 type="text",
                 text=f"Error getting topics: {str(e)}"
+            )]
+    
+    elif name == "deprecate_message":
+        conversation_title = arguments["conversation_title"]
+        message_index = arguments["message_index"]
+        reason = arguments.get("reason", "")
+        
+        try:
+            conversations = orchestrator.list_conversations()
+            
+            if not conversations:
+                return [TextContent(
+                    type="text",
+                    text="No conversations available"
+                )]
+
+            # Find the conversation
+            conv = None
+            for c in conversations:
+                if c['original_title'] == conversation_title:
+                    conv = c
+                    break
+            
+            if not conv:
+                return [TextContent(
+                    type="text",
+                    text=f"Conversation '{conversation_title}' not found"
+                )]
+
+            # Deprecate the message in ChromaDB
+            from ..storage.chroma_store import ChromaStore
+            
+            if config.embedding.provider == 'openai':
+                from ..embedders.openai_embedder import OpenAIEmbedder
+                embedder = OpenAIEmbedder(config.embedding.openai)
+            
+            storage = ChromaStore(
+                config.storage.chroma_db_path,
+                conv['collection_name'],
+                embedder
+            )
+
+            result = storage.deprecate_document(message_index, reason)
+            
+            if result['success']:
+                response = f"✓ {result['message']}\n\n"
+                response += f"Conversation: {conversation_title}\n"
+                response += f"Message index: {message_index}\n"
+                if reason:
+                    response += f"Reason: {reason}\n"
+                response += "\nThis message will no longer appear in search results."
+            else:
+                response = f"✗ {result['message']}"
+            
+            return [TextContent(type="text", text=response)]
+            
+        except Exception as e:
+            return [TextContent(
+                type="text",
+                text=f"Error deprecating message: {str(e)}"
             )]
     
     else:

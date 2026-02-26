@@ -102,9 +102,10 @@ class ChromaStore:
                 topics = [t.strip() for t in topics_str.split(',') if t.strip()]
             
             # Create main document - for regular search
+            # Include is_deprecated: "false" by default for reliable filtering
             expanded_docs.append({
                 'text': text,
-                'metadata': {**metadata, 'doc_type': DOC_TYPE_MAIN},
+                'metadata': {**metadata, 'doc_type': DOC_TYPE_MAIN, 'is_deprecated': 'false'},
                 'message_id': f"{metadata['platform']}_{metadata['conversation_id']}_{metadata['message_index']}"
             })
             
@@ -112,7 +113,7 @@ class ChromaStore:
             for topic in topics:
                 expanded_docs.append({
                     'text': text,
-                    'metadata': {**metadata, 'topic': topic, 'doc_type': DOC_TYPE_TOPIC},
+                    'metadata': {**metadata, 'topic': topic, 'doc_type': DOC_TYPE_TOPIC, 'is_deprecated': 'false'},
                     'message_id': f"{metadata['platform']}_{metadata['conversation_id']}_{metadata['message_index']}"
                 })
         
@@ -329,15 +330,19 @@ class ChromaStore:
         """
         query_embedding = self.embedder.embed_single(query)
 
-        # Always restrict to main documents (one per message, no duplicates).
-        # Use explicit $eq operator for reliable cross-version ChromaDB behaviour.
+        # Build base filters: doc_type + exclude deprecated
         doc_type_filter = {"doc_type": {"$eq": DOC_TYPE_MAIN}}
-
+        not_deprecated_filter = {"is_deprecated": {"$ne": "true"}}  # Exclude deprecated docs
+        
         if filters:
-            # Combine with caller-supplied filters using $and
-            where_filter = {"$and": [{k: {"$eq": v}} for k, v in filters.items()] + [doc_type_filter]}
+            # Combine: doc_type + not_deprecated + user filters
+            where_filter = {
+                "$and": [
+                    {k: {"$eq": v} for k, v in filters.items()}
+                ] + [doc_type_filter, not_deprecated_filter]
+            }
         else:
-            where_filter = doc_type_filter
+            where_filter = {"$and": [doc_type_filter, not_deprecated_filter]}
 
         # Fetch extra candidates for MMR reranking
         fetch_count = n_results * MMR_OVERFETCH_FACTOR if use_mmr else n_results
@@ -423,11 +428,12 @@ class ChromaStore:
         """
         query_embedding = self.embedder.embed_single(query)
 
-        # Explicitly target topic documents for the requested topic only.
+        # Explicitly target topic documents for the requested topic, exclude deprecated
         where_filter = {
             "$and": [
                 {"doc_type": {"$eq": DOC_TYPE_TOPIC}},
-                {"topic": {"$eq": topic}}
+                {"topic": {"$eq": topic}},
+                {"is_deprecated": {"$ne": "true"}}
             ]
         }
 
@@ -438,6 +444,57 @@ class ChromaStore:
         )
 
         return results
+    
+    def deprecate_document(self, message_index: int, reason: str = "") -> Dict:
+        """
+        Mark all documents for a message as deprecated.
+        
+        Deprecates both the main document and all topic-specific documents
+        for the given message_index. Deprecated documents are excluded from
+        regular searches by default.
+        
+        Args:
+            message_index: The message index to deprecate
+            reason: Optional reason for deprecation
+        
+        Returns:
+            Dict with 'success', 'documents_deprecated', and 'message'
+        """
+        from datetime import datetime
+        
+        # Find all documents for this message_index (main + topic docs)
+        results = self.collection.get(
+            where={"message_index": {"$eq": message_index}},
+            include=["metadatas"]
+        )
+        
+        if not results['ids']:
+            return {
+                'success': False,
+                'documents_deprecated': 0,
+                'message': f"No documents found with message_index {message_index}"
+            }
+        
+        # Update metadata for all matching documents
+        updated_metadatas = []
+        for metadata in results['metadatas']:
+            updated_meta = {**metadata}
+            updated_meta['is_deprecated'] = 'true'
+            updated_meta['deprecation_reason'] = reason
+            updated_meta['deprecated_at'] = datetime.now().isoformat()
+            updated_metadatas.append(updated_meta)
+        
+        # Batch update all documents
+        self.collection.update(
+            ids=results['ids'],
+            metadatas=updated_metadatas
+        )
+        
+        return {
+            'success': True,
+            'documents_deprecated': len(results['ids']),
+            'message': f"Deprecated {len(results['ids'])} document(s) for message_index {message_index}"
+        }
     
     def get_document_count(self) -> int:
         """Get total number of documents in collection."""
