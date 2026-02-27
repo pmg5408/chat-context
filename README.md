@@ -1,16 +1,15 @@
 # Chat Context
+### An MCP Server for AI Conversation History Search
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io)
 
-Stop repeating yourself across AI conversations. This MCP server lets AI assistants search your past chats for relevant context — automatically.
-
-**The Problem:** Start a new AI chat, lose all context from yesterday's 2-hour planning session.
-
-**The Solution:** AI assistants search your conversation history and retrieve exactly what they need.
+An **MCP (Model Context Protocol) server** that enables AI assistants to search through your conversation history.
 
 ⭐ **If this tool helps you, please star the repo!**
+
+**Built with:** [Model Context Protocol](https://modelcontextprotocol.io) • Vector Search • Semantic Retrieval
 
 ## Quick Demo
 
@@ -33,21 +32,15 @@ Stop repeating yourself across AI conversations. This MCP server lets AI assista
 
 ### 1. Cost-Effective Planning → Coding Pipeline
 Use a capable but cheaper model for extensive planning, then switch to a more powerful model for coding:
-
-1. **Planning Phase**: Use ChatGPT or Claude free tier to:
+- **Planning Phase**: Use ChatGPT or Claude free tier to:
    - Explore tradeoffs
    - Make architecture decisions
    - Discuss implementation approaches
    - Iterate on requirements
 
-2. **Context Transfer**: Export and ingest the planning conversation
+- **Coding Phase**: Use any Coding Agent like Claude Code or Cline that can be connected to MCP Servers and let them gather context as they need
 
-3. **Coding Phase**: Use any Coding Agent like Claude Code or Cline that can be connected to MCP Servers:
-   - Fetch relevant planning decisions and code snippets via semantic search
-   - Remember the "why" behind decisions
-   - Continue without re-explaining everything
-
-**Savings**: Planning often involves long back-and-forth. Doing this on a free tier and only using paid tokens for actual coding significantly reduces costs.
+**The Benefit:** Spend your "expensive" tokens only on code generation, not on re-reading 50 messages of architectural debate.
 
 ### 2. Protection Against Context Rot
 **Context rot** is when AI assistants become less effective in very long conversations. As chats grow longer (hundreds of messages), you may notice:
@@ -55,46 +48,32 @@ Use a capable but cheaper model for extensive planning, then switch to a more po
 - Contradictory suggestions as it struggles to process everything
 - The AI "forgetting" important details from earlier in the conversation
 
-**Traditional solution:** Start a new chat and manually summarize everything (tedious and lossy).
+**The Benefit:** The AI works with a clean slate but can still reference your entire conversation history on-demand through semantic search.
 
-**This tool's solution:** Start a fresh conversation while maintaining full access to your previous discussion:
-1. Export the long conversation when you notice performance degrading
-2. Ingest it: `python -m src.cli add claude "Old Conversation"`
-3. Start a new chat - the AI can search and retrieve relevant context automatically
-4. No manual summarizing, no lost details, fresh performance
+### 3. Mitigating "Scaling Input Costs"
+Modern LLMs are stateless; they don't "remember" past messages. Instead, the entire chat history is resent to the model with every new prompt. As a conversation grows, even a tiny 10-word prompt can consume thousands of tokens in "background" context.
+- **The Problem:** In long threads, you are paying (in money or rate limits) for the same 5,000+ tokens over and over again with every single message you send even if the message is a single line question. 
 
-The AI works with a clean slate but can still reference your entire conversation history on-demand through semantic search.
+**The Benefit:** Instead of sending 5,000 tokens of history with every prompt, your AI assistant only retrieves the specific ~200 tokens relevant to your current question. This significantly reduces latency and preserves your rate limits/API credits.
 
-### 2. Cross-Platform Conversation Continuation
+### 4. Cross-Platform Conversation Continuation
 Continue conversations across different AI platforms without losing context or re-explaining everything.
-
-**Use when:**
 - You hit message limits on one platform and want to continue elsewhere
 - You want to use different AI tools for different parts of a project
 - One platform has features you need that another doesn't
 
-**How it works:**
-- Export conversations from platforms that support exports
-- Continue on platforms that support MCP servers
-- The AI automatically fetches relevant context - no copy-pasting summaries
+**The Benefit:** Hit a message limit on Claude? Export, ingest, and keep the momentum going in ChatGPT or a local IDE agent without copy-pasting summaries.
 
-**Example workflow:**
-1. Chat in ChatGPT free tier until you hit message limits
-2. Export conversation from ChatGPT
-3. Import via CLI: `python -m src.cli add chatgpt "My conversation"`
-4. Continue in Claude Desktop (or any MCP-compatible client) with full context
+### 5. Project Knowledge Base
+Maintain a searchable knowledge base across multiple conversations.
 
-### 4. Project Knowledge Base
-Maintain a searchable knowledge base across multiple conversations:
-- Different conversations for different aspects (frontend, backend, devops)
-- Search across all when starting a new feature
-- Deprecate outdated decisions as the project evolves
+**The Benefit:** Search across frontend, backend, and DevOps threads simultaneously. Use the `deprecate_message` tool to ensure the AI never retrieves an outdated architectural decision.
 
 ## Features
 
 ### Core Functionality
 - **Multi-platform support**: Claude and ChatGPT conversation exports
-- **Semantic search**: Find relevant messages using natural language queries
+- **Semantic search**: Allows AI Assistants to find relevant messages using natural language queries
 - **Topic filtering**: Narrow searches to specific subjects
 - **Conversation management**: Add, update, and remove conversations to manage ChromaDB space usage
 - **Cross-platform**: Works with Claude, Cline, and other platforms that support MCP
@@ -158,6 +137,42 @@ data/
       conversations.json
 ```
 
+## MCP Server Configuration
+
+### Claude Desktop (macOS)
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "chat-history": {
+      "command": "/path/to/chat-context/venv/bin/python",
+      "args": ["-m", "src.mcp_server.server"],
+      "cwd": "/path/to/chat-context"
+    }
+  }
+}
+```
+
+### Claude Desktop (Windows)
+Edit `%APPDATA%\Claude\claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "chat-history": {
+      "command": "C:\\path\\to\\chat-context\\venv\\Scripts\\python.exe",
+      "args": ["-m", "src.mcp_server.server"],
+      "cwd": "C:\\path\\to\\chat-context"
+    }
+  }
+}
+```
+
+### Other MCP Clients
+The server uses standard MCP over stdio. Any MCP-compatible client can connect:
+- Point the client to `python -m src.mcp_server.server`
+- Set working directory to project root
+- Ensure environment variables are set (via .env file)
+
 ## Configuration
 
 Edit `config.yaml` to customize behavior:
@@ -208,42 +223,6 @@ python -m src.cli remove "My conversation title"
 # List all conversations
 python -m src.cli list
 ```
-
-## MCP Server Configuration
-
-### Claude Desktop (macOS)
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "chat-history": {
-      "command": "/path/to/chat-context/venv/bin/python",
-      "args": ["-m", "src.mcp_server.server"],
-      "cwd": "/path/to/chat-context"
-    }
-  }
-}
-```
-
-### Claude Desktop (Windows)
-Edit `%APPDATA%\Claude\claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "chat-history": {
-      "command": "C:\\path\\to\\chat-context\\venv\\Scripts\\python.exe",
-      "args": ["-m", "src.mcp_server.server"],
-      "cwd": "C:\\path\\to\\chat-context"
-    }
-  }
-}
-```
-
-### Other MCP Clients
-The server uses standard MCP over stdio. Any MCP-compatible client can connect:
-- Point the client to `python -m src.mcp_server.server`
-- Set working directory to project root
-- Ensure environment variables are set (via .env file)
 
 ## Cost Breakdown
 
